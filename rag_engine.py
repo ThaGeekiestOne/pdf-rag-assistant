@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import hashlib
+import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-import re
 
-import torch
+from langchain_core.embeddings import Embeddings
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
 
 
 @dataclass
@@ -19,11 +19,36 @@ class RagAnswer:
     sources: list[dict[str, Any]]
 
 
+class LocalHashEmbeddings(Embeddings):
+    def __init__(self, dimensions: int = 384) -> None:
+        self.dimensions = dimensions
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._embed(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed(text)
+
+    def _embed(self, text: str) -> list[float]:
+        vector = [0.0] * self.dimensions
+        tokens = re.findall(r"[a-zA-Z0-9]+", text.lower())
+        for token in tokens:
+            digest = hashlib.md5(token.encode("utf-8")).digest()
+            index = int.from_bytes(digest[:4], "little") % self.dimensions
+            sign = 1.0 if digest[4] % 2 == 0 else -1.0
+            vector[index] += sign
+
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm == 0:
+            return vector
+        return [value / norm for value in vector]
+
+
 class RagPdfBot:
     def __init__(
         self,
-        embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
-        llm_model_name: str = "google/flan-t5-small",
+        embedding_model_name: str = "local-hash-embeddings",
+        llm_model_name: str = "extractive",
         chunk_size: int = 800,
         chunk_overlap: int = 120,
     ) -> None:
@@ -38,11 +63,7 @@ class RagPdfBot:
         pages = loader.load()
         chunks = self._split_documents(pages)
 
-        embeddings = HuggingFaceEmbeddings(
-            model_name=self.embedding_model_name,
-            model_kwargs={"device": "cuda" if torch.cuda.is_available() else "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
-        )
+        embeddings = LocalHashEmbeddings()
         self.vectorstore = FAISS.from_documents(chunks, embeddings)
 
         return {"pages": len(pages), "chunks": len(chunks)}

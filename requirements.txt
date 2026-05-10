@@ -1,10 +1,5 @@
 streamlit
 langchain
 langchain-community
-langchain-huggingface
 faiss-cpu==1.13.2
 pypdf
-sentence-transformers
-transformers
-torch
-accelerate

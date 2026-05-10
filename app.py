@@ -7,7 +7,7 @@ import streamlit as st
 from rag_engine import RagPdfBot
 
 
-APP_VERSION = "2026-05-10-extractive-rag"
+APP_VERSION = "2026-05-10-local-embeddings"
 
 
 st.set_page_config(
@@ -40,7 +40,8 @@ with st.sidebar:
 
     embedding_model = st.text_input(
         "Embedding model",
-        value=os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"),
+        value=os.getenv("EMBEDDING_MODEL", "local-hash-embeddings"),
+        disabled=True,
     )
     llm_model = os.getenv("LLM_MODEL", "extractive")
     chunk_size = st.slider("Chunk size", 300, 1500, 800, 50)
