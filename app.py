@@ -4,10 +4,10 @@ from pathlib import Path
 
 import streamlit as st
 
-from rag import RagPdfBot
+from rag_engine import RagPdfBot
 
 
-APP_VERSION = "2026-05-10-direct-generate"
+APP_VERSION = "2026-05-10-rag-engine-v2"
 
 
 st.set_page_config(
