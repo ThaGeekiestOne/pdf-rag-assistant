@@ -7,6 +7,9 @@ import streamlit as st
 from rag import RagPdfBot
 
 
+APP_VERSION = "2026-05-10-direct-generate"
+
+
 st.set_page_config(
     page_title="RAG PDF Chatbot",
     layout="wide",
@@ -32,6 +35,7 @@ def save_upload(uploaded_file) -> Path:
 
 with st.sidebar:
     st.title("PDF RAG")
+    st.caption(f"Build: {APP_VERSION}")
     st.caption("Upload a PDF, index it with FAISS, then ask questions.")
 
     embedding_model = st.text_input(
