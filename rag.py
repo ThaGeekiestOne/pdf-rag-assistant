@@ -5,12 +5,9 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.llms import HuggingFacePipeline
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
@@ -35,7 +32,7 @@ class RagPdfBot:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.vectorstore: FAISS | None = None
-        self._llm: HuggingFacePipeline | None = None
+        self._llm: Any | None = None
 
     def index_pdf(self, pdf_path: str | Path) -> dict[str, int]:
         loader = PyPDFLoader(str(pdf_path))
@@ -55,29 +52,22 @@ class RagPdfBot:
         if self.vectorstore is None:
             raise RuntimeError("No PDF has been indexed yet.")
 
-        retriever = self.vectorstore.as_retriever(
-            search_type="mmr",
-            search_kwargs={
-                "k": top_k,
-                "fetch_k": max(12, top_k * 4),
-                "lambda_mult": 0.45,
-            },
+        documents = self.vectorstore.max_marginal_relevance_search(
+            question,
+            k=top_k,
+            fetch_k=max(12, top_k * 4),
+            lambda_mult=0.45,
         )
-        chain = RetrievalQA.from_chain_type(
-            llm=self._get_llm(),
-            retriever=retriever,
-            chain_type="stuff",
-            return_source_documents=True,
-            chain_type_kwargs={
-                "document_prompt": self._document_prompt(),
-                "prompt": self._prompt(answer_style),
-            },
+        prompt = self._prompt(
+            question=question,
+            documents=documents,
+            answer_style=answer_style,
         )
-        result = chain.invoke({"query": question})
+        result = self._get_llm()(prompt)
 
         return RagAnswer(
-            answer=result["result"].strip(),
-            sources=self._format_sources(result.get("source_documents", [])),
+            answer=result[0]["generated_text"].strip(),
+            sources=self._format_sources(documents),
         )
 
     def _split_documents(self, documents: list[Document]) -> list[Document]:
@@ -92,7 +82,7 @@ class RagPdfBot:
             chunk.metadata["page_label"] = str(page)
         return chunks
 
-    def _get_llm(self) -> HuggingFacePipeline:
+    def _get_llm(self) -> Any:
         if self._llm is not None:
             return self._llm
 
@@ -107,18 +97,23 @@ class RagPdfBot:
             repetition_penalty=1.08,
             device=0 if torch.cuda.is_available() else -1,
         )
-        self._llm = HuggingFacePipeline(pipeline=task)
+        self._llm = task
         return self._llm
 
     @staticmethod
-    def _prompt(answer_style: str) -> PromptTemplate:
+    def _prompt(question: str, documents: list[Document], answer_style: str) -> str:
         style_rules = {
             "Concise": "Answer in 2-4 direct sentences.",
             "Detailed": "Answer with a short explanation and bullet points when useful.",
             "Balanced": "Answer clearly in one short paragraph, using bullets only when helpful.",
         }
         style = style_rules.get(answer_style, style_rules["Balanced"])
-        template = """You are a careful PDF question-answering assistant.
+        context = "\n\n".join(
+            f"[Page {doc.metadata.get('page_label', int(doc.metadata.get('page', 0)) + 1)}]\n"
+            f"{doc.page_content}"
+            for doc in documents
+        )
+        return f"""You are a careful PDF question-answering assistant.
 Use only the supplied PDF context. Do not use outside knowledge.
 If the context does not contain enough information, say: "I do not know from the provided PDF."
 When facts come from the PDF, include page references like (p. 3).
@@ -130,18 +125,6 @@ Context:
 Question: {question}
 
 Answer:"""
-        return PromptTemplate(
-            template=template,
-            input_variables=["context", "question"],
-            partial_variables={"style": style},
-        )
-
-    @staticmethod
-    def _document_prompt() -> PromptTemplate:
-        return PromptTemplate(
-            template="[Page {page_label}]\n{page_content}",
-            input_variables=["page_content", "page_label"],
-        )
 
     @staticmethod
     def _format_sources(documents: list[Document]) -> list[dict[str, Any]]:
