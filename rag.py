@@ -10,7 +10,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 
 @dataclass
@@ -63,10 +63,10 @@ class RagPdfBot:
             documents=documents,
             answer_style=answer_style,
         )
-        result = self._get_llm()(prompt)
+        answer = self._generate_answer(prompt)
 
         return RagAnswer(
-            answer=result[0]["generated_text"].strip(),
+            answer=answer,
             sources=self._format_sources(documents),
         )
 
@@ -82,23 +82,35 @@ class RagPdfBot:
             chunk.metadata["page_label"] = str(page)
         return chunks
 
-    def _get_llm(self) -> Any:
+    def _get_llm(self) -> tuple[Any, Any, torch.device]:
         if self._llm is not None:
             return self._llm
 
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         tokenizer = AutoTokenizer.from_pretrained(self.llm_model_name)
-        model = AutoModelForSeq2SeqLM.from_pretrained(self.llm_model_name)
-        task = pipeline(
-            "text2text-generation",
-            model=model,
-            tokenizer=tokenizer,
-            max_new_tokens=384,
-            do_sample=False,
-            repetition_penalty=1.08,
-            device=0 if torch.cuda.is_available() else -1,
-        )
-        self._llm = task
+        model = AutoModelForSeq2SeqLM.from_pretrained(self.llm_model_name).to(device)
+        model.eval()
+        self._llm = (tokenizer, model, device)
         return self._llm
+
+    def _generate_answer(self, prompt: str) -> str:
+        tokenizer, model, device = self._get_llm()
+        inputs = tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=1024,
+        ).to(device)
+
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=256,
+                do_sample=False,
+                repetition_penalty=1.08,
+            )
+
+        return tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
     @staticmethod
     def _prompt(question: str, documents: list[Document], answer_style: str) -> str:
