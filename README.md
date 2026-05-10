@@ -1,6 +1,6 @@
 # RAG PDF Chatbot
 
-A PDF question-answering chatbot built with LangChain, FAISS, Hugging Face embeddings, and an open-source Hugging Face LLM.
+A PDF question-answering chatbot built with LangChain, FAISS, Hugging Face embeddings, and a deployment-friendly extractive answer engine.
 
 ## Features
 
@@ -8,7 +8,7 @@ A PDF question-answering chatbot built with LangChain, FAISS, Hugging Face embed
 - Split PDF text into overlapping chunks.
 - Generate embeddings with `sentence-transformers/all-MiniLM-L6-v2`.
 - Store and search vectors with FAISS.
-- Answer questions with `google/flan-t5-small` by default.
+- Answer questions from the most relevant retrieved PDF sentences.
 - Use MMR retrieval to reduce duplicate chunks and improve context quality.
 - Format retrieved chunks with page labels for page-aware answers.
 - Show source page snippets for each answer.
@@ -31,23 +31,13 @@ Then open the local Streamlit URL in your browser, upload a PDF, click **Index P
 
 ## Model Configuration
 
-You can change models from the sidebar or through environment variables:
+You can change the embedding model through environment variables:
 
 ```powershell
 $env:EMBEDDING_MODEL="sentence-transformers/all-MiniLM-L6-v2"
-$env:LLM_MODEL="google/flan-t5-small"
 streamlit run app.py
 ```
-
-For stronger answers, try `google/flan-t5-base` or another compatible text-to-text model that your machine can run.
 
 ## Improving Answer Quality
 
-The default model is intentionally small so it can run on most laptops. If answers feel weak, first try:
-
-```powershell
-$env:LLM_MODEL="google/flan-t5-base"
-streamlit run app.py
-```
-
-Better answers usually come from improving retrieval and using a stronger instruction model. Actual fine-tuning is only useful when you have a dataset of example questions and ideal answers.
+The deployed version uses extractive answers for reliability on Streamlit Cloud. Better answers usually come from improving chunk size, chunk overlap, retrieval count, and PDF text quality. Actual model fine-tuning is only useful when you have a dataset of example questions and ideal answers.

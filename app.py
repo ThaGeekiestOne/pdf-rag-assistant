@@ -7,7 +7,7 @@ import streamlit as st
 from rag_engine import RagPdfBot
 
 
-APP_VERSION = "2026-05-10-rag-engine-v2"
+APP_VERSION = "2026-05-10-extractive-rag"
 
 
 st.set_page_config(
@@ -42,10 +42,7 @@ with st.sidebar:
         "Embedding model",
         value=os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"),
     )
-    llm_model = st.text_input(
-        "Seq2Seq LLM model",
-        value=os.getenv("LLM_MODEL", "google/flan-t5-small"),
-    )
+    llm_model = os.getenv("LLM_MODEL", "extractive")
     chunk_size = st.slider("Chunk size", 300, 1500, 800, 50)
     chunk_overlap = st.slider("Chunk overlap", 0, 400, 120, 20)
     top_k = st.slider("Retrieved chunks", 2, 10, 5)

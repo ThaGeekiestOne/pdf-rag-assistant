@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import re
 
 import torch
 from langchain_core.documents import Document
@@ -10,7 +11,6 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 
 @dataclass
@@ -32,7 +32,6 @@ class RagPdfBot:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.vectorstore: FAISS | None = None
-        self._llm: Any | None = None
 
     def index_pdf(self, pdf_path: str | Path) -> dict[str, int]:
         loader = PyPDFLoader(str(pdf_path))
@@ -58,12 +57,11 @@ class RagPdfBot:
             fetch_k=max(12, top_k * 4),
             lambda_mult=0.45,
         )
-        prompt = self._prompt(
+        answer = self._generate_answer(
             question=question,
             documents=documents,
             answer_style=answer_style,
         )
-        answer = self._generate_answer(prompt)
 
         return RagAnswer(
             answer=answer,
@@ -82,61 +80,78 @@ class RagPdfBot:
             chunk.metadata["page_label"] = str(page)
         return chunks
 
-    def _get_llm(self) -> tuple[Any, Any, torch.device]:
-        if self._llm is not None:
-            return self._llm
+    def _generate_answer(
+        self,
+        question: str,
+        documents: list[Document],
+        answer_style: str,
+    ) -> str:
+        ranked_sentences = self._rank_sentences(question, documents)
+        if not ranked_sentences:
+            return "I do not know from the provided PDF."
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        tokenizer = AutoTokenizer.from_pretrained(self.llm_model_name)
-        model = AutoModelForSeq2SeqLM.from_pretrained(self.llm_model_name).to(device)
-        model.eval()
-        self._llm = (tokenizer, model, device)
-        return self._llm
+        limits = {"Concise": 3, "Balanced": 5, "Detailed": 8}
+        limit = limits.get(answer_style, limits["Balanced"])
+        selected = ranked_sentences[:limit]
 
-    def _generate_answer(self, prompt: str) -> str:
-        tokenizer, model, device = self._get_llm()
-        inputs = tokenizer(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=1024,
-        ).to(device)
+        if answer_style == "Detailed":
+            return "\n".join(f"- {sentence} (p. {page})" for sentence, page, _ in selected)
 
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=256,
-                do_sample=False,
-                repetition_penalty=1.08,
-            )
-
-        return tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+        return " ".join(f"{sentence} (p. {page})" for sentence, page, _ in selected)
 
     @staticmethod
-    def _prompt(question: str, documents: list[Document], answer_style: str) -> str:
-        style_rules = {
-            "Concise": "Answer in 2-4 direct sentences.",
-            "Detailed": "Answer with a short explanation and bullet points when useful.",
-            "Balanced": "Answer clearly in one short paragraph, using bullets only when helpful.",
+    def _rank_sentences(question: str, documents: list[Document]) -> list[tuple[str, int, int]]:
+        stop_words = {
+            "a",
+            "an",
+            "and",
+            "are",
+            "as",
+            "at",
+            "be",
+            "by",
+            "for",
+            "from",
+            "in",
+            "is",
+            "it",
+            "of",
+            "on",
+            "or",
+            "that",
+            "the",
+            "this",
+            "to",
+            "what",
+            "when",
+            "where",
+            "which",
+            "who",
+            "why",
+            "with",
         }
-        style = style_rules.get(answer_style, style_rules["Balanced"])
-        context = "\n\n".join(
-            f"[Page {doc.metadata.get('page_label', int(doc.metadata.get('page', 0)) + 1)}]\n"
-            f"{doc.page_content}"
-            for doc in documents
-        )
-        return f"""You are a careful PDF question-answering assistant.
-Use only the supplied PDF context. Do not use outside knowledge.
-If the context does not contain enough information, say: "I do not know from the provided PDF."
-When facts come from the PDF, include page references like (p. 3).
-{style}
+        terms = {
+            term
+            for term in re.findall(r"[a-zA-Z0-9]+", question.lower())
+            if len(term) > 2 and term not in stop_words
+        }
 
-Context:
-{context}
+        scored = []
+        seen = set()
+        for doc in documents:
+            page = int(doc.metadata.get("page", 0)) + 1
+            sentences = re.split(r"(?<=[.!?])\s+|\n+", doc.page_content)
+            for sentence in sentences:
+                clean = " ".join(sentence.split())
+                if len(clean) < 30 or clean in seen:
+                    continue
+                seen.add(clean)
+                sentence_terms = set(re.findall(r"[a-zA-Z0-9]+", clean.lower()))
+                score = len(terms & sentence_terms)
+                if score:
+                    scored.append((clean, page, score))
 
-Question: {question}
-
-Answer:"""
+        return sorted(scored, key=lambda item: item[2], reverse=True)
 
     @staticmethod
     def _format_sources(documents: list[Document]) -> list[dict[str, Any]]:
